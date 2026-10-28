@@ -58,3 +58,4 @@ All errors use RFC 7807 `application/problem+json` and include the request ID.
 
 On every pull request: lint → tests (with a real Postgres) → dependency vulnerability scan → image build → image scan.
 On merge to `main`: the same, then push the image to GHCR, deploy that exact image to Render by digest, and smoke-test until `/version` reports the new commit.
+
