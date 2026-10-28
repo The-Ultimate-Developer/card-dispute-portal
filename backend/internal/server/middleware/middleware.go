@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -52,8 +53,8 @@ func Recover(log *slog.Logger) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			defer func() {
 				if rec := recover(); rec != nil {
-					if rec == http.ErrAbortHandler { // deliberate abort; let net/http handle it
-						panic(rec)
+					if err, ok := rec.(error); ok && errors.Is(err, http.ErrAbortHandler) {
+						panic(rec) // deliberate abort; let net/http handle it
 					}
 					log.Error("panic recovered",
 						"request_id", RequestIDFrom(r.Context()),

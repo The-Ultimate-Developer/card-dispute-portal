@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -20,7 +21,7 @@ func TestRequestIDGeneratedAndPropagated(t *testing.T) {
 	}))
 
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	h.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil))
 
 	got := rec.Header().Get("X-Request-ID")
 	if got == "" || got != seen {
@@ -30,7 +31,7 @@ func TestRequestIDGeneratedAndPropagated(t *testing.T) {
 
 func TestRequestIDRejectsUnsafeInput(t *testing.T) {
 	h := RequestID(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
 	req.Header.Set("X-Request-ID", "bad\nid")
 
 	rec := httptest.NewRecorder()
@@ -43,7 +44,7 @@ func TestRequestIDRejectsUnsafeInput(t *testing.T) {
 
 func TestRequestIDKeepsValidInput(t *testing.T) {
 	h := RequestID(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
 	req.Header.Set("X-Request-ID", "abc-12345678")
 
 	rec := httptest.NewRecorder()
@@ -59,7 +60,7 @@ func TestRecoverReturnsProblemJSON(t *testing.T) {
 		RequestID, Recover(discardLogger()))
 
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	h.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil))
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("got %d, want 500", rec.Code)
@@ -86,7 +87,7 @@ func TestAccessLogRecordsStatusAndNoQueryString(t *testing.T) {
 	h := AccessLog(log)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusTeapot)
 	}))
-	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/x?email=secret@example.com", nil))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/x?email=secret@example.com", nil))
 
 	out := buf.String()
 	if !strings.Contains(out, `"status":418`) {
@@ -100,7 +101,7 @@ func TestAccessLogRecordsStatusAndNoQueryString(t *testing.T) {
 func TestSecurityHeaders(t *testing.T) {
 	h := SecurityHeaders(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	h.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil))
 
 	for _, k := range []string{"X-Content-Type-Options", "X-Frame-Options", "Cache-Control", "Content-Security-Policy"} {
 		if rec.Header().Get(k) == "" {
@@ -123,7 +124,7 @@ func TestChainOrder(t *testing.T) {
 		}
 	}
 	Chain(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), mk("a"), mk("b"), mk("c")).
-		ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+		ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil))
 
 	if strings.Join(order, ",") != "a,b,c" {
 		t.Fatalf("wrong order: %v", order)

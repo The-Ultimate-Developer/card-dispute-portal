@@ -24,7 +24,7 @@ func newTestServer(db Pinger) *Server {
 
 func do(s *Server, method, path string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
-	s.Handler().ServeHTTP(rec, httptest.NewRequest(method, path, nil))
+	s.Handler().ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), method, path, nil))
 	return rec
 }
 

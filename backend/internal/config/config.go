@@ -59,8 +59,8 @@ func Load() (Config, error) {
 		errs = append(errs, errors.New("DATABASE_URL must be a postgres:// URL"))
 	}
 
-	cfg.DB.MaxConns = int32(parseInt("DB_MAX_CONNS", "10", 1, 100, &errs))
-	cfg.DB.MinConns = int32(parseInt("DB_MIN_CONNS", "1", 0, 100, &errs))
+	cfg.DB.MaxConns = parseInt32("DB_MAX_CONNS", "10", 1, 100, &errs)
+	cfg.DB.MinConns = parseInt32("DB_MIN_CONNS", "1", 0, 100, &errs)
 	if cfg.DB.MinConns > cfg.DB.MaxConns {
 		errs = append(errs, errors.New("DB_MIN_CONNS cannot exceed DB_MAX_CONNS"))
 	}
@@ -90,10 +90,11 @@ func parseDuration(key, fallback string, errs *[]error) time.Duration {
 	return d
 }
 
-func parseInt(key, fallback string, lo, hi int, errs *[]error) int {
-	n, err := strconv.Atoi(getEnv(key, fallback))
-	if err != nil || n < lo || n > hi {
+func parseInt32(key, fallback string, lo, hi int32, errs *[]error) int32 {
+	n, err := strconv.ParseInt(getEnv(key, fallback), 10, 32) // bitSize 32: can't overflow int32
+	if err != nil || n < int64(lo) || n > int64(hi) {
 		*errs = append(*errs, fmt.Errorf("%s must be a number between %d and %d", key, lo, hi))
+		return 0
 	}
-	return n
+	return int32(n)
 }
