@@ -1,0 +1,143 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A newer push to the same branch cancels the older run
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege by default; jobs ask for more only if they need it
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.5
+          working-directory: backend
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: disputes
+          POSTGRES_PASSWORD: disputes
+          POSTGRES_DB: disputes
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U disputes"
+          --health-interval 2s --health-timeout 3s --health-retries 15
+    env:
+      TEST_DATABASE_URL: postgres://disputes:disputes@localhost:5432/disputes?sslmode=disable
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Vet
+        run: go vet ./...
+      - name: Test (race detector, no cache, real Postgres)
+        run: go test -race -count=1 -coverprofile=coverage.out ./...
+      - name: Coverage summary
+        run: go tool cover -func=coverage.out | tail -1
+      - name: Known vulnerabilities in dependencies
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  image:
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      ref: ${{ steps.push.outputs.ref }}
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Image name (registry paths must be lowercase)
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}/api" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: |
+          docker build \
+            --build-arg VERSION=${{ github.sha }} \
+            --build-arg BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+            --label org.opencontainers.image.source=https://github.com/${{ github.repository }} \
+            --label org.opencontainers.image.revision=${{ github.sha }} \
+            -t "$IMAGE:${{ github.sha }}" .
+
+      - name: Scan image (fail on fixable HIGH/CRITICAL)
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:latest image \
+            --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed \
+            "$IMAGE:${{ github.sha }}"
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push'
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Push and capture digest
+        id: push
+        if: github.event_name == 'push'
+        run: |
+          docker push "$IMAGE:${{ github.sha }}"
+          REF=$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE:${{ github.sha }}")
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+          echo "Pushed $REF"
+
+  deploy:
+    needs: image
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Trigger Render deploy of the exact scanned image (by digest)
+        env:
+          HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+          REF: ${{ needs.image.outputs.ref }}
+        run: |
+          if [ -z "$HOOK" ]; then
+            echo "::warning::RENDER_DEPLOY_HOOK_URL not set yet, skipping deploy"
+            exit 0
+          fi
+          ENCODED=$(jq -rn --arg v "$REF" '$v|@uri')
+          curl -fsS -X POST "${HOOK}&imgURL=${ENCODED}" > /dev/null
+          echo "Deploy triggered for $REF"
+
+      - name: Smoke test (wait until THIS commit is live and ready)
+        env:
+          URL: ${{ vars.API_BASE_URL }}
+          SHA: ${{ github.sha }}
+        run: |
+          if [ -z "$URL" ]; then echo "::warning::API_BASE_URL not set, skipping"; exit 0; fi
+          for i in $(seq 1 40); do
+            LIVE=$(curl -fsS "$URL/version" | jq -r .version || true)
+            if [ "$LIVE" = "$SHA" ] && curl -fsS "$URL/readyz" > /dev/null; then
+              echo "Commit $SHA is live and ready"; exit 0
+            fi
+            echo "Live version: ${LIVE:-none}, waiting for $SHA..."
+            sleep 15
+          done
+          echo "::error::$SHA not live and ready after 10 minutes"; exit 1
