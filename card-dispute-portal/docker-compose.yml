@@ -1,11 +1,37 @@
+# One command runs the whole system locally: docker compose up --build
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: disputes
+      POSTGRES_PASSWORD: disputes   # local-only credentials; real ones live in Render
+      POSTGRES_DB: disputes
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U disputes -d disputes"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
   api:
     build:
       context: ./backend
+      args:
+        VERSION: local
     environment:
       APP_ENV: development
       PORT: "8080"
       LOG_LEVEL: debug
+      DATABASE_URL: postgres://disputes:disputes@postgres:5432/disputes?sslmode=disable
     ports:
       - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy   # start the API only once Postgres accepts connections
     restart: unless-stopped
+
+volumes:
+  pgdata:
