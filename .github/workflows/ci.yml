@@ -27,7 +27,7 @@ jobs:
       - name: go.mod and go.sum are tidy
         working-directory: backend
         run: go mod tidy -diff
-      - uses: golangci/golangci-lint-action@v8
+      - uses: golangci/golangci-lint-action@v9
         with:
           version: latest
           working-directory: backend
