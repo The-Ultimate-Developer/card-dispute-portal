@@ -1,0 +1,629 @@
+openapi: 3.0.3
+info:
+  title: Card Dispute Portal API
+  version: 1.0.0
+  description: |
+    Customers view their card transactions and dispute them. Back-office staff:
+    agents work the dispute queue, support unlocks accounts, and admins can do
+    both plus view the system overview and security audit log.
+
+    **Authentication.** `POST /api/auth/login` sets an httpOnly session cookie and
+    returns a `csrfToken`. Every state-changing request must send that token in
+    the `X-CSRF-Token` header. In Swagger UI: log in with *Try it out*, copy the
+    `csrfToken` from the response, then use *Authorize* to set it.
+
+    **Errors.** Every error is `application/problem+json` (RFC 7807) with a
+    stable machine-readable `code`.
+
+    **Demo accounts** (password `Demo@2026!`): `thandi@demo.capitec.local` and
+    `sipho@demo.capitec.local` (customers), `agent@demo.capitec.local`,
+    `support@demo.capitec.local`, `admin@demo.capitec.local`.
+servers:
+  - url: /
+
+tags:
+  - name: Auth
+  - name: Transactions
+  - name: Disputes
+  - name: Support
+  - name: Admin
+  - name: Operations
+
+paths:
+  /api/auth/login:
+    post:
+      tags: [Auth]
+      summary: Sign in
+      description: |
+        Three consecutive failed attempts lock the account until support unlocks it.
+        Unknown emails behave identically, so responses never reveal which accounts
+        exist. Rate limited per IP.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: Signed in. Sets the session cookie.
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+              description: httpOnly, Secure, SameSite=Strict session cookie.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Session' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '423': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /api/auth/logout:
+    post:
+      tags: [Auth]
+      summary: Sign out and revoke the session
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      responses:
+        '204': { description: Signed out. }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+
+  /api/auth/me:
+    get:
+      tags: [Auth]
+      summary: Current user and CSRF token (used to restore a session after reload)
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: The signed-in user.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Session' }
+        '401': { $ref: '#/components/responses/Problem' }
+
+  /api/transactions:
+    get:
+      tags: [Transactions]
+      summary: List the customer's card transactions, newest first
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: A page of transactions, each with its latest dispute (if any).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TransactionPage' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
+
+  /api/disputes:
+    post:
+      tags: [Disputes]
+      summary: Dispute a transaction
+      description: |
+        Idempotent: retrying with the same `Idempotency-Key` and body returns the
+        original dispute (200, `Idempotent-Replayed: true`). A transaction can have
+        only one open dispute at a time.
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 8, maxLength: 128, pattern: '^[A-Za-z0-9_-]+$' }
+          description: A unique value per submission, e.g. a UUID generated when the form opens.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateDisputeRequest' }
+      responses:
+        '201':
+          description: Dispute created.
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Dispute' }
+        '200':
+          description: Idempotent replay of an earlier identical request.
+          headers:
+            Idempotent-Replayed: { schema: { type: string, enum: ['true'] } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Dispute' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/Problem' }
+    get:
+      tags: [Disputes]
+      summary: List disputes (customers see their own; agents and admins see all, with the customer attached)
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/DisputeStatus' }
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: A page of disputes, newest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DisputePage' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+
+  /api/disputes/{id}:
+    get:
+      tags: [Disputes]
+      summary: Get a dispute with its status timeline
+      description: Returns 404 for another customer's dispute, so its existence is not revealed.
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: The dispute and every status change, oldest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DisputeDetail' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+
+  /api/disputes/{id}/status:
+    patch:
+      tags: [Disputes]
+      summary: Move a dispute through its lifecycle (agents and admins)
+      description: |
+        Allowed: SUBMITTED → UNDER_REVIEW or REJECTED; UNDER_REVIEW → RESOLVED or REJECTED.
+        Send the `version` you last read; if someone else changed the dispute since,
+        the request fails with 409 `STALE_VERSION`. A note is required to resolve or reject.
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChangeStatusRequest' }
+      responses:
+        '200':
+          description: Updated dispute with timeline.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DisputeDetail' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+
+  /api/support/locked-accounts:
+    get:
+      tags: [Support]
+      summary: List locked accounts
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Locked accounts, most recent first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/LockedAccount' }
+        '403': { $ref: '#/components/responses/Problem' }
+
+  /api/support/accounts/{id}/unlock:
+    post:
+      tags: [Support]
+      summary: Unlock an account (audited)
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '204': { description: Unlocked; the failed-attempt counter is reset. }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /api/admin/overview:
+    get:
+      tags: [Admin]
+      summary: System overview for the back office (admins only)
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Dispute and account health at a glance.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Overview' }
+        '403': { $ref: '#/components/responses/Problem' }
+
+  /api/admin/audit-events:
+    get:
+      tags: [Admin]
+      summary: Security audit log, newest first (admins only)
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: event
+          in: query
+          schema: { $ref: '#/components/schemas/AuditEventType' }
+        - name: before
+          in: query
+          description: Return events older than this ID (from `nextBefore`).
+          schema: { type: integer, format: int64 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        '200':
+          description: A page of audit events.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuditPage' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+
+  /api/admin/notifications:
+    get:
+      tags: [Admin]
+      summary: Notification delivery log (admins only)
+      description: |
+        Customer emails are written to a transactional outbox in the same
+        database transaction as the change that caused them, then delivered by
+        a background worker with retries. This shows delivery state only, never
+        message content.
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [PENDING, SENT, DEAD] }
+        - name: before
+          in: query
+          schema: { type: integer, format: int64 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        '200':
+          description: A page of notifications, newest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationPage' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+
+  /metrics:
+    get:
+      tags: [Operations]
+      summary: Prometheus metrics (bearer token required)
+      description: Send `Authorization` as `Bearer <METRICS_TOKEN>`. Any other request gets 404, so the endpoint's existence is not revealed.
+      responses:
+        '200': { description: Prometheus text exposition. }
+        '404': { description: Missing or wrong token, or metrics disabled. }
+
+  /livez:
+    get:
+      tags: [Operations]
+      summary: Liveness (never checks dependencies)
+      responses:
+        '200': { description: Process is alive. }
+  /readyz:
+    get:
+      tags: [Operations]
+      summary: Readiness (checks the database)
+      responses:
+        '200': { description: Ready for traffic. }
+        '503': { description: Not ready (shutting down or database unavailable). }
+  /version:
+    get:
+      tags: [Operations]
+      summary: Commit SHA and build time of the running binary
+      responses:
+        '200': { description: Build information. }
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: __Host-session
+      description: Set automatically by the login response.
+    csrfToken:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+      description: The `csrfToken` returned by login or `/api/auth/me`.
+
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    Cursor:
+      name: cursor
+      in: query
+      description: Opaque cursor from the previous page's `nextCursor`.
+      schema: { type: string }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+
+  responses:
+    Problem:
+      description: Error (RFC 7807).
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    RateLimited:
+      description: Too many requests.
+      headers:
+        Retry-After:
+          schema: { type: integer }
+          description: Seconds to wait before retrying.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+  schemas:
+    Problem:
+      type: object
+      required: [type, title, status]
+      properties:
+        type: { type: string, example: about:blank }
+        title: { type: string, example: Conflict }
+        status: { type: integer, example: 409 }
+        code: { type: string, example: ACTIVE_DISPUTE_EXISTS }
+        detail: { type: string }
+        errors:
+          type: object
+          additionalProperties: { type: string }
+          description: Field-level validation messages.
+        requestId: { type: string }
+
+    Role:
+      type: string
+      enum: [CUSTOMER, AGENT, SUPPORT, ADMIN]
+
+    User:
+      type: object
+      required: [id, email, fullName, role]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        fullName: { type: string }
+        role: { $ref: '#/components/schemas/Role' }
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      additionalProperties: false
+      properties:
+        email: { type: string, format: email, example: thandi@demo.capitec.local }
+        password: { type: string, format: password, example: Demo@2026! }
+
+    Session:
+      type: object
+      required: [user, csrfToken]
+      properties:
+        user: { $ref: '#/components/schemas/User' }
+        csrfToken: { type: string }
+
+    TransactionStatus:
+      type: string
+      enum: [PENDING, POSTED]
+
+    Transaction:
+      type: object
+      required: [id, cardId, cardBrand, cardLast4, merchant, category, amountCents, currency, status, occurredAt, disputable, dispute]
+      properties:
+        id: { type: string, format: uuid }
+        cardId: { type: string, format: uuid }
+        cardBrand: { type: string, example: VISA }
+        cardLast4: { type: string, example: '4821' }
+        merchant: { type: string }
+        category: { type: string }
+        amountCents: { type: integer, format: int64, description: Amount in minor units (cents). }
+        currency: { type: string, example: ZAR }
+        status: { $ref: '#/components/schemas/TransactionStatus' }
+        occurredAt: { type: string, format: date-time }
+        disputable:
+          type: boolean
+          description: Posted, within 120 days, and without an open dispute.
+        dispute:
+          nullable: true
+          allOf: [{ $ref: '#/components/schemas/DisputeSummary' }]
+
+    TransactionPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Transaction' }
+        nextCursor: { type: string }
+
+    DisputeStatus:
+      type: string
+      enum: [SUBMITTED, UNDER_REVIEW, RESOLVED, REJECTED]
+
+    DisputeReason:
+      type: string
+      enum: [UNRECOGNISED, DUPLICATE, INCORRECT_AMOUNT, NOT_RECEIVED, CANCELLED_SUBSCRIPTION, OTHER]
+
+    DisputeSummary:
+      type: object
+      required: [id, status]
+      properties:
+        id: { type: string, format: uuid }
+        status: { $ref: '#/components/schemas/DisputeStatus' }
+
+    CreateDisputeRequest:
+      type: object
+      required: [transactionId, reason, description]
+      additionalProperties: false
+      properties:
+        transactionId: { type: string, format: uuid }
+        reason: { $ref: '#/components/schemas/DisputeReason' }
+        description: { type: string, minLength: 10, maxLength: 1000 }
+
+    ChangeStatusRequest:
+      type: object
+      required: [status, version]
+      additionalProperties: false
+      properties:
+        status: { $ref: '#/components/schemas/DisputeStatus' }
+        version: { type: integer, minimum: 1 }
+        note: { type: string, maxLength: 500, description: Required (min 3 chars) for RESOLVED and REJECTED. }
+
+    Dispute:
+      type: object
+      required: [id, transactionId, merchant, amountCents, currency, cardLast4, transactionOccurredAt, reason, description, status, version, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        customer:
+          description: Present only for staff (agents and admins).
+          allOf: [{ $ref: '#/components/schemas/Customer' }]
+        transactionId: { type: string, format: uuid }
+        merchant: { type: string }
+        amountCents: { type: integer, format: int64 }
+        currency: { type: string }
+        cardLast4: { type: string }
+        transactionOccurredAt: { type: string, format: date-time }
+        reason: { $ref: '#/components/schemas/DisputeReason' }
+        description: { type: string }
+        status: { $ref: '#/components/schemas/DisputeStatus' }
+        version: { type: integer }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    TimelineEvent:
+      type: object
+      required: [id, fromStatus, toStatus, actorRole, note, createdAt]
+      properties:
+        id: { type: integer, format: int64 }
+        fromStatus:
+          nullable: true
+          allOf: [{ $ref: '#/components/schemas/DisputeStatus' }]
+        toStatus: { $ref: '#/components/schemas/DisputeStatus' }
+        actorRole: { $ref: '#/components/schemas/Role' }
+        note: { type: string }
+        createdAt: { type: string, format: date-time }
+
+    DisputeDetail:
+      allOf:
+        - $ref: '#/components/schemas/Dispute'
+        - type: object
+          required: [timeline]
+          properties:
+            timeline:
+              type: array
+              items: { $ref: '#/components/schemas/TimelineEvent' }
+
+    DisputePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Dispute' }
+        nextCursor: { type: string }
+
+    LockedAccount:
+      type: object
+      required: [id, email, fullName, lockedAt, lockReason]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string }
+        fullName: { type: string }
+        lockedAt: { type: string, format: date-time }
+        lockReason: { type: string }
+
+    Customer:
+      type: object
+      required: [id, fullName, email]
+      properties:
+        id: { type: string, format: uuid }
+        fullName: { type: string }
+        email: { type: string }
+
+    Overview:
+      type: object
+      required: [disputesByStatus, openDisputes, openDisputedAmountCents, oldestOpenDisputeAt, disputesLast7Days, customers, lockedAccounts, failedLoginsLast24h, notificationsPending, notificationsFailed]
+      properties:
+        disputesByStatus:
+          type: object
+          additionalProperties: { type: integer }
+          example: { SUBMITTED: 4, UNDER_REVIEW: 2, RESOLVED: 7, REJECTED: 1 }
+        openDisputes: { type: integer }
+        openDisputedAmountCents: { type: integer, format: int64 }
+        oldestOpenDisputeAt: { type: string, format: date-time, nullable: true }
+        disputesLast7Days: { type: integer }
+        customers: { type: integer }
+        lockedAccounts: { type: integer }
+        failedLoginsLast24h: { type: integer }
+        notificationsPending: { type: integer }
+        notificationsFailed: { type: integer, description: Messages that exhausted their retries (dead letter). }
+
+    AuditEventType:
+      type: string
+      enum: [LOGIN_SUCCEEDED, LOGIN_FAILED, LOGIN_BLOCKED, ACCOUNT_LOCKED, ACCOUNT_UNLOCKED, LOGOUT]
+
+    AuditEvent:
+      type: object
+      required: [id, event, email, userId, actorEmail, ip, createdAt]
+      properties:
+        id: { type: integer, format: int64 }
+        event: { $ref: '#/components/schemas/AuditEventType' }
+        email: { type: string, nullable: true }
+        userId: { type: string, format: uuid, nullable: true }
+        actorEmail: { type: string, nullable: true, description: The staff member who performed the action, e.g. an unlock. }
+        ip: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+
+    AuditPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/AuditEvent' }
+        nextBefore: { type: integer, format: int64 }
+
+    Notification:
+      type: object
+      required: [id, topic, status, attempts, lastError, createdAt, nextAttemptAt, sentAt]
+      properties:
+        id: { type: integer, format: int64 }
+        topic: { type: string, enum: [dispute.created, dispute.status_changed, account.locked] }
+        status: { type: string, enum: [PENDING, SENT, DEAD] }
+        attempts: { type: integer }
+        lastError: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        nextAttemptAt: { type: string, format: date-time, nullable: true }
+        sentAt: { type: string, format: date-time, nullable: true }
+
+    NotificationPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Notification' }
+        nextBefore: { type: integer, format: int64 }

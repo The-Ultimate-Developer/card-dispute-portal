@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
@@ -84,18 +85,32 @@ func TestAccessLogRecordsStatusAndNoQueryString(t *testing.T) {
 	var buf bytes.Buffer
 	log := slog.New(slog.NewJSONHandler(&buf, nil))
 
-	h := AccessLog(log)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	obs := &recordingObserver{}
+	route := func(*http.Request) string { return "GET /x" }
+	h := AccessLog(log, route, obs)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusTeapot)
 	}))
 	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/x?email=secret@example.com", nil))
 
 	out := buf.String()
-	if !strings.Contains(out, `"status":418`) {
-		t.Fatalf("status not logged: %s", out)
+	if !strings.Contains(out, `"status":418`) || !strings.Contains(out, `"route":"GET /x"`) {
+		t.Fatalf("status or route not logged: %s", out)
+	}
+	if obs.route != "GET /x" || obs.status != http.StatusTeapot {
+		t.Fatalf("metrics not observed: %+v", obs)
 	}
 	if strings.Contains(out, "secret@example.com") {
 		t.Fatal("query string leaked into logs")
 	}
+}
+
+type recordingObserver struct {
+	route  string
+	status int
+}
+
+func (o *recordingObserver) ObserveRequest(_ string, route string, status int, _ time.Duration) {
+	o.route, o.status = route, status
 }
 
 func TestSecurityHeaders(t *testing.T) {

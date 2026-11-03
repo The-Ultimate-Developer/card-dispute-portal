@@ -3,12 +3,12 @@ backend/bin/
 *.test
 coverage.out
 
-# Env & secrets
+# Env & secrets: never committed
 .env
 .env.*
 !.env.example
 
-# Node
+# Node (frontend later)
 node_modules/
 dist/
 
