@@ -89,16 +89,28 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 	return n, err
 }
 
-// AccessLog writes one structured line per request.
-// Deliberately logs the path only, never the query string or body (they can carry personal data).
-func AccessLog(log *slog.Logger) func(http.Handler) http.Handler {
+// RequestObserver records request metrics. Route is the matched pattern
+// (e.g. "GET /api/disputes/{id}"), never the raw path, to keep label cardinality bounded.
+type RequestObserver interface {
+	ObserveRequest(method, route string, status int, elapsed time.Duration)
+}
+
+// AccessLog writes one structured line per request and feeds the metrics.
+// It logs the path only, never the query string or body, which can carry personal data.
+func AccessLog(log *slog.Logger, routeOf func(*http.Request) string, obs RequestObserver) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
+			route := routeOf(r)
 			rec := &statusRecorder{ResponseWriter: w}
 			next.ServeHTTP(rec, r)
 			if rec.status == 0 {
 				rec.status = http.StatusOK
+			}
+			elapsed := time.Since(start)
+
+			if obs != nil {
+				obs.ObserveRequest(r.Method, route, rec.status, elapsed)
 			}
 
 			level := slog.LevelInfo
@@ -108,10 +120,11 @@ func AccessLog(log *slog.Logger) func(http.Handler) http.Handler {
 			log.Log(r.Context(), level, "http request",
 				"request_id", RequestIDFrom(r.Context()),
 				"method", r.Method,
+				"route", route,
 				"path", r.URL.Path,
 				"status", rec.status,
 				"bytes", rec.bytes,
-				"duration_ms", time.Since(start).Milliseconds())
+				"duration_ms", elapsed.Milliseconds())
 		})
 	}
 }
@@ -127,6 +140,9 @@ func SecurityHeaders(next http.Handler) http.Handler {
 		h.Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
 		h.Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 		h.Set("Cache-Control", "no-store")
+		h.Set("Cross-Origin-Opener-Policy", "same-origin")
+		h.Set("Cross-Origin-Resource-Policy", "same-origin")
+		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
 		next.ServeHTTP(w, r)
 	})
 }

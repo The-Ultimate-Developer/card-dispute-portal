@@ -1,0 +1,10 @@
+DROP TABLE IF EXISTS idempotency_keys;
+DROP TABLE IF EXISTS dispute_events;
+DROP TABLE IF EXISTS disputes;
+DROP TABLE IF EXISTS transactions;
+DROP TABLE IF EXISTS cards;
+DROP TABLE IF EXISTS auth_events;
+DROP TABLE IF EXISTS sessions;
+DROP TABLE IF EXISTS login_failures;
+DROP TABLE IF EXISTS users;
+DROP FUNCTION IF EXISTS forbid_mutation();

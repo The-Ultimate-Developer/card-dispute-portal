@@ -1,0 +1,5 @@
+# On a real team, backend and frontend would have different owners,
+# and GitHub would auto-request their review on matching changes.
+*            @The-Ultimate-Developer
+/backend/    @The-Ultimate-Developer
+/frontend/   @The-Ultimate-Developer

@@ -9,8 +9,7 @@ import (
 	"github.com/The-Ultimate-Developer/card-dispute-portal/backend/internal/platform/httpx"
 )
 
-// Every route lives here, in one readable place.
-func (s *Server) registerRoutes(mux *http.ServeMux) {
+func (s *Server) registerHealthRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /livez", s.handleLive)
 	mux.HandleFunc("GET /readyz", s.handleReady)
 	mux.HandleFunc("GET /version", s.handleVersion)

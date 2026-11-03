@@ -9,8 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/The-Ultimate-Developer/card-dispute-portal/backend/internal/config"
+	"time"
 )
 
 // fakeDB lets us simulate a healthy or broken database without running one.
@@ -19,7 +18,7 @@ type fakeDB struct{ err error }
 func (f fakeDB) Ping(context.Context) error { return f.err }
 
 func newTestServer(db Pinger) *Server {
-	return New(config.Config{Port: 0}, slog.New(slog.NewTextHandler(io.Discard, nil)), db)
+	return New(Options{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: db})
 }
 
 func do(s *Server, method, path string) *httptest.ResponseRecorder {
@@ -101,5 +100,37 @@ func TestEveryResponseHasSecurityHeadersAndRequestID(t *testing.T) {
 	}
 	if rec.Header().Get("Cache-Control") != "no-store" {
 		t.Error("missing Cache-Control: no-store")
+	}
+}
+
+func TestRunStopsWorkersAfterShutdown(t *testing.T) {
+	stopped := make(chan struct{})
+	srv := New(Options{
+		Port: 0,
+		Log:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		DB:   fakeDB{},
+		Workers: []Worker{{Name: "test", Run: func(ctx context.Context) {
+			<-ctx.Done()
+			close(stopped)
+		}}},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- srv.Run(ctx, time.Second) }()
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not shut down")
+	}
+	select {
+	case <-stopped:
+	default:
+		t.Fatal("Run returned before its workers stopped")
 	}
 }

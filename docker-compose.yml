@@ -4,7 +4,7 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: disputes
-      POSTGRES_PASSWORD: disputes   # local-only credentials; real ones live in Render
+      POSTGRES_PASSWORD: disputes
       POSTGRES_DB: disputes
     ports:
       - "5432:5432"
@@ -26,11 +26,14 @@ services:
       PORT: "8080"
       LOG_LEVEL: debug
       DATABASE_URL: postgres://disputes:disputes@postgres:5432/disputes?sslmode=disable
+      SEED_DEMO_DATA: "true"
+      COOKIE_SECURE: "false"
+      METRICS_TOKEN: local-metrics-token-0123456789abcdef
     ports:
       - "8080:8080"
     depends_on:
       postgres:
-        condition: service_healthy   # start the API only once Postgres accepts connections
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:

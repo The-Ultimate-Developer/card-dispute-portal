@@ -17,12 +17,16 @@ permissions:
 jobs:
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v5
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
+      - name: go.mod and go.sum are tidy
+        working-directory: backend
+        run: go mod tidy -diff
       - uses: golangci/golangci-lint-action@v8
         with:
           version: latest
@@ -30,6 +34,7 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:16-alpine
@@ -43,6 +48,7 @@ jobs:
           --health-interval 2s --health-timeout 3s --health-retries 15
     env:
       TEST_DATABASE_URL: postgres://disputes:disputes@localhost:5432/disputes?sslmode=disable
+      COVERAGE_FLOOR: "50"
     defaults:
       run:
         working-directory: backend
@@ -56,14 +62,19 @@ jobs:
         run: go vet ./...
       - name: Test (race detector, no cache, real Postgres)
         run: go test -race -count=1 -coverprofile=coverage.out ./...
-      - name: Coverage summary
-        run: go tool cover -func=coverage.out | tail -1
+      - name: Coverage floor
+        run: |
+          total=$(go tool cover -func=coverage.out | awk '/^total:/ {sub("%", "", $3); print $3}')
+          echo "Total coverage: ${total}%"
+          awk -v t="$total" -v f="$COVERAGE_FLOOR" 'BEGIN { exit (t + 0 < f + 0) }' \
+            || { echo "::error::Coverage ${total}% is below the ${COVERAGE_FLOOR}% floor"; exit 1; }
       - name: Known vulnerabilities in dependencies
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
   image:
     needs: [lint, test]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
       packages: write
@@ -88,9 +99,12 @@ jobs:
             -t "$IMAGE:${{ github.sha }}" .
 
       - name: Scan image (fail on fixable HIGH/CRITICAL)
+        timeout-minutes: 10
         run: |
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
             aquasec/trivy:latest image \
+            --db-repository public.ecr.aws/aquasecurity/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2,mirror.gcr.io/aquasec/trivy-db:2 \
+            --timeout 5m \
             --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed \
             "$IMAGE:${{ github.sha }}"
 
@@ -111,17 +125,23 @@ jobs:
     needs: image
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment: production
     steps:
+      # A deploy that silently does nothing must never show green.
+      - name: Check deploy configuration
+        env:
+          HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+          URL: ${{ vars.API_BASE_URL }}
+        run: |
+          [ -n "$HOOK" ] || { echo "::error::RENDER_DEPLOY_HOOK_URL secret is missing from the production environment"; exit 1; }
+          [ -n "$URL" ]  || { echo "::error::API_BASE_URL variable is missing from the production environment"; exit 1; }
+
       - name: Trigger Render deploy of the exact scanned image (by digest)
         env:
           HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
           REF: ${{ needs.image.outputs.ref }}
         run: |
-          if [ -z "$HOOK" ]; then
-            echo "::warning::RENDER_DEPLOY_HOOK_URL not set yet, skipping deploy"
-            exit 0
-          fi
           ENCODED=$(jq -rn --arg v "$REF" '$v|@uri')
           curl -fsS -X POST "${HOOK}&imgURL=${ENCODED}" > /dev/null
           echo "Deploy triggered for $REF"
@@ -131,11 +151,12 @@ jobs:
           URL: ${{ vars.API_BASE_URL }}
           SHA: ${{ github.sha }}
         run: |
-          if [ -z "$URL" ]; then echo "::warning::API_BASE_URL not set, skipping"; exit 0; fi
           for i in $(seq 1 40); do
             LIVE=$(curl -fsS "$URL/version" | jq -r .version || true)
             if [ "$LIVE" = "$SHA" ] && curl -fsS "$URL/readyz" > /dev/null; then
-              echo "Commit $SHA is live and ready"; exit 0
+              echo "Commit $SHA is live and ready"
+              curl -fsS -o /dev/null "$URL/openapi.yaml" && echo "API docs served"
+              exit 0
             fi
             echo "Live version: ${LIVE:-none}, waiting for $SHA..."
             sleep 15
