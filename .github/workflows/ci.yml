@@ -79,7 +79,7 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -98,7 +98,7 @@ jobs:
         run: npm run audit:prod
       - name: Build
         run: npm run build
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: web-dist
           path: frontend/dist
@@ -217,7 +217,7 @@ jobs:
           [ -n "$API" ]   || { echo "::error::API_BASE_URL variable is missing from the production environment"; exit 1; }
           [ -n "$WEB" ]   || { echo "::error::FRONTEND_URL variable is missing from the production environment"; exit 1; }
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: web-dist
           path: dist
