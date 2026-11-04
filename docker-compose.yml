@@ -29,11 +29,22 @@ services:
       SEED_DEMO_DATA: "true"
       COOKIE_SECURE: "false"
       METRICS_TOKEN: local-metrics-token-0123456789abcdef
+      # nginx in the web service adds one X-Forwarded-For entry
+      TRUSTED_PROXY_HOPS: "1"
     ports:
       - "8080:8080"
     depends_on:
       postgres:
         condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./frontend
+    ports:
+      - "3000:8080"
+    depends_on:
+      - api
     restart: unless-stopped
 
 volumes:

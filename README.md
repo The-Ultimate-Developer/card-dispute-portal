@@ -1,13 +1,13 @@
 # Card Dispute Portal
 
-A secure portal for customers to view their card transactions, dispute them, and follow each dispute on a status timeline, with email updates at every step. Back-office staff use the same API with their own logins: agents work the dispute queue, support unlocks accounts, and admins oversee everything.
+A secure portal for customers to view their card transactions, dispute them, and follow each dispute on a status timeline, with email updates at every step. Back-office staff use the same app with their own logins: agents work the dispute queue, support unlocks accounts, and admins oversee everything.
 
 | | |
 |---|---|
 | API | Go (standard library `net/http`), pgx, golang-migrate, Prometheus client |
 | Database | PostgreSQL 16 |
-| Frontend | React + TypeScript (in `frontend/`) |
-| CI/CD | GitHub Actions → GitHub Container Registry → Render |
+| Frontend | React 19 + TypeScript (strict), Vite, TanStack Query, React Router, React Hook Form + zod |
+| CI/CD | GitHub Actions → GitHub Container Registry → Render (API) and Netlify (web) |
 | API docs | Swagger UI at `/docs`; contract in [`backend/api/openapi.yaml`](backend/api/openapi.yaml) |
 | Operations | [`docs/runbook.md`](docs/runbook.md): environment, deploy, verify, roll back |
 
@@ -19,6 +19,7 @@ Requires Docker.
 docker compose up --build
 ```
 
+- App: http://localhost:3000
 - API: http://localhost:8080
 - Swagger UI: http://localhost:8080/docs
 
@@ -48,6 +49,17 @@ make test-integration   # everything, against real Postgres
 ```
 
 Each integration test creates and drops its own database, so tests are isolated and run in parallel.
+
+Frontend (requires Node 22), with the API running on :8080:
+
+```bash
+cd frontend
+npm ci
+npm run dev             # http://localhost:5173, proxies /api to :8080
+npm test                # Vitest + Testing Library + MSW
+npm run lint && npm run typecheck
+npm run gen:api         # regenerate API types after changing openapi.yaml
+```
 
 ## API
 
@@ -96,8 +108,17 @@ Every error is `application/problem+json` with a stable `code`, such as `ACTIVE_
 - Structured JSON logs with a request ID, route and commit SHA on every line.
 - Prometheus metrics for requests and latency per route, logins, dispute flow, notification delivery, circuit state and database pool.
 
+**Frontend**
+- The browser only ever talks to its own origin: `/api` is proxied by Vite, nginx or Netlify. The session cookie stays first-party, there is no CORS, and the CSP is `connect-src 'self'` with no inline script or style.
+- The CSRF token lives in memory only, never in `localStorage`. A 401 from any call returns the user to sign-in with an explanation.
+- API types are generated from `openapi.yaml`; CI fails if they drift from the contract.
+- Dispute submission sends one `Idempotency-Key` per form, so a double-click or retry can't create two disputes. Status changes send the version the agent read; on a conflict the latest version is reloaded and shown.
+- Route guards and navigation come from one role table that mirrors the API. They are UX only; the API enforces every permission.
+- Accessible by default: native `<dialog>`, labelled form errors, a skip link, visible focus, and the case track announced as an ordered list with the current step marked.
+
 **Quality gates (CI)**
 - golangci-lint with security linters, a `go mod tidy` check, tests with the race detector against real Postgres, a coverage floor, govulncheck, and a Trivy image scan.
+- Frontend: contract check, type check, ESLint with type-aware rules (warnings fail), tests, `npm audit` on shipped dependencies, and a production build.
 - Tests prove the access policy for every endpoint and every role, that every endpoint is in the OpenAPI contract (and vice versa), and that every migration rolls back cleanly.
 
 ## Failure modes
@@ -124,4 +145,4 @@ Deliberately out of scope, with the seams in place:
 - **Back office:** a separate staff application on an internal network behind SSO, with four-eyes approval on sensitive actions.
 - **Edge:** WAF and bot protection.
 
-Architecture decisions are recorded in [`docs/adr`](docs/adr).
+Architecture decisions are recorded in [`docs/adr`](docs/adr). Deployment and operations are in [`docs/runbook.md`](docs/runbook.md).
