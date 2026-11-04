@@ -1,11 +1,23 @@
 version: 2
+# Grouped so each ecosystem arrives as one weekly PR instead of one per package,
+# which also stops them conflicting with each other in the same file.
 updates:
   - package-ecosystem: gomod
     directory: /backend
     schedule: { interval: weekly }
+    groups:
+      go: { patterns: ["*"] }
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule: { interval: weekly }
+    groups:
+      npm-minor-and-patch:
+        update-types: [minor, patch]
   - package-ecosystem: docker
-    directory: /backend
+    directories: [/backend, /frontend]
     schedule: { interval: weekly }
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly }
+    groups:
+      actions: { patterns: ["*"] }

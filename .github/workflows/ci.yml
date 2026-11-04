@@ -71,6 +71,40 @@ jobs:
       - name: Known vulnerabilities in dependencies
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install (exactly what the lockfile says)
+        run: npm ci --no-audit --no-fund
+      - name: API types match the OpenAPI contract
+        run: npm run check:api
+      - name: Type check
+        run: npm run typecheck
+      - name: Lint (warnings fail the build)
+        run: npm run lint
+      - name: Test
+        run: npm test
+      - name: Known vulnerabilities in shipped dependencies
+        run: npm run audit:prod
+      - name: Build
+        run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: frontend/dist
+          retention-days: 7
+          if-no-files-found: error
+
   image:
     needs: [lint, test]
     runs-on: ubuntu-latest
@@ -162,3 +196,55 @@ jobs:
             sleep 15
           done
           echo "::error::$SHA not live and ready after 10 minutes"; exit 1
+
+  deploy-frontend:
+    # After the API: the API only ever gains fields, so a new frontend never meets an older API.
+    needs: [frontend, deploy]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    steps:
+      - name: Check deploy configuration
+        env:
+          TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          SITE: ${{ secrets.NETLIFY_SITE_ID }}
+          API: ${{ vars.API_BASE_URL }}
+          WEB: ${{ vars.FRONTEND_URL }}
+        run: |
+          [ -n "$TOKEN" ] || { echo "::error::NETLIFY_AUTH_TOKEN secret is missing from the production environment"; exit 1; }
+          [ -n "$SITE" ]  || { echo "::error::NETLIFY_SITE_ID secret is missing from the production environment"; exit 1; }
+          [ -n "$API" ]   || { echo "::error::API_BASE_URL variable is missing from the production environment"; exit 1; }
+          [ -n "$WEB" ]   || { echo "::error::FRONTEND_URL variable is missing from the production environment"; exit 1; }
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: dist
+
+      # Netlify proxies /api to Render, so the browser sees one origin: the session
+      # cookie stays first-party and the CSP can stay at connect-src 'self'.
+      - name: Write routing rules
+        env:
+          API: ${{ vars.API_BASE_URL }}
+        run: |
+          printf '/api/*  %s/api/:splat  200\n/*  /index.html  200\n' "$API" > dist/_redirects
+          cat dist/_redirects
+
+      - name: Deploy to Netlify
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+        run: npx --yes netlify-cli@27.15.0 deploy --dir dist --prod --no-build --message "${{ github.sha }}"
+
+      - name: Smoke test
+        env:
+          WEB: ${{ vars.FRONTEND_URL }}
+        run: |
+          curl -fsS "$WEB/" | grep -q '<div id="root">' && echo "App shell served"
+          curl -fsS -o /dev/null "$WEB/staff/disputes" && echo "Client-side route falls back to index.html"
+          curl -fsSI "$WEB/" | grep -qi '^content-security-policy:' && echo "Security headers present"
+          STATUS=$(curl -s -o /tmp/me.json -w '%{http_code}' "$WEB/api/auth/me")
+          [ "$STATUS" = "401" ] && grep -q '"code":"UNAUTHENTICATED"' /tmp/me.json \
+            || { echo "::error::/api proxy is not reaching the API (got $STATUS)"; exit 1; }
+          echo "API reachable through the proxy"

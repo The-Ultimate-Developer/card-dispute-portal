@@ -8,9 +8,10 @@ coverage.out
 .env.*
 !.env.example
 
-# Node (frontend later)
+# Node
 node_modules/
 dist/
+coverage/
 
 # IDE / OS
 .idea/
