@@ -790,7 +790,7 @@ export interface components {
             status: components["schemas"]["TransactionStatus"];
             /** Format: date-time */
             occurredAt: string;
-            /** @description Posted, within 120 days, and without an open dispute. */
+            /** @description Posted, within 120 days, with no open dispute and no dispute already resolved in the customer's favour. A declined dispute can be raised again. */
             disputable: boolean;
             dispute: components["schemas"]["DisputeSummary"] | null;
         };
@@ -848,9 +848,16 @@ export interface components {
             fromStatus: components["schemas"]["DisputeStatus"] | null;
             toStatus: components["schemas"]["DisputeStatus"];
             actorRole: components["schemas"]["Role"];
+            /** @description The person behind the event. Present only for staff (agents and admins). */
+            actor?: components["schemas"]["Actor"];
             note: string;
             /** Format: date-time */
             createdAt: string;
+        };
+        Actor: {
+            fullName: string;
+            /** Format: email */
+            email: string;
         };
         DisputeDetail: components["schemas"]["Dispute"] & {
             timeline: components["schemas"]["TimelineEvent"][];

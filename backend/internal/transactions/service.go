@@ -93,7 +93,7 @@ func (s *Service) List(ctx context.Context, p auth.Principal, after string, limi
 		}
 		item.Disputable = t.Status == corebanking.StatusPosted &&
 			now.Sub(t.OccurredAt) <= disputes.DisputeWindow &&
-			(item.Dispute == nil || item.Dispute.Status.Final())
+			(item.Dispute == nil || item.Dispute.Status == disputes.StatusRejected)
 		out.Items[i] = item
 	}
 	return out, nil

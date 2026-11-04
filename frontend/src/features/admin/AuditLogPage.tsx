@@ -67,7 +67,7 @@ export function AuditLogPage() {
                   <td>{formatDateTime(e.createdAt)}</td>
                   <td>{eventLabels[e.event]}</td>
                   <td>{e.email ?? 'Unknown'}</td>
-                  <td>{e.actorEmail ?? <span className="muted">Customer</span>}</td>
+                  <td>{e.actorEmail ?? <span className="muted">None</span>}</td>
                   <td className="numeric">{e.ip ?? <span className="muted">Not recorded</span>}</td>
                 </tr>
               ))}

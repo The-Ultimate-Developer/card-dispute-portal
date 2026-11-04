@@ -129,6 +129,10 @@ export function LoginPage() {
           <p>
             Every account uses the password <code>{DEMO_PASSWORD}</code>. Choose one to fill in the form.
           </p>
+          <p>
+            This is a demo environment with made-up customers. A production build hides this panel, and no demo accounts
+            are created.
+          </p>
           <ul>
             {demoAccounts.map((account) => (
               <li key={account.email}>

@@ -87,8 +87,16 @@ type Event struct {
 	FromStatus *Status   `json:"fromStatus"`
 	ToStatus   Status    `json:"toStatus"`
 	ActorRole  string    `json:"actorRole"`
+	Actor      *Actor    `json:"actor,omitempty"`
 	Note       string    `json:"note"`
 	CreatedAt  time.Time `json:"createdAt"`
+}
+
+// Actor names the person behind a timeline event. Only staff see it: customers
+// are told "Disputes team", never which employee handled their case.
+type Actor struct {
+	FullName string `json:"fullName"`
+	Email    string `json:"email"`
 }
 
 type DisputeDetail struct {

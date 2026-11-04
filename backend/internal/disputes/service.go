@@ -23,8 +23,10 @@ const (
 )
 
 var (
-	ErrNotFound             = apperr.NotFound("DISPUTE_NOT_FOUND", "Dispute not found.")
-	ErrActiveDisputeExists  = apperr.Conflict("ACTIVE_DISPUTE_EXISTS", "This transaction already has an open dispute.")
+	ErrNotFound            = apperr.NotFound("DISPUTE_NOT_FOUND", "Dispute not found.")
+	ErrActiveDisputeExists = apperr.Conflict("ACTIVE_DISPUTE_EXISTS", "This transaction already has an open dispute.")
+	ErrAlreadyResolved     = apperr.Conflict("DISPUTE_ALREADY_RESOLVED",
+		"A dispute about this transaction was already resolved in your favour, so it can't be disputed again.")
 	ErrIdempotencyKeyReused = apperr.Unprocessable("IDEMPOTENCY_KEY_REUSED",
 		"This Idempotency-Key was already used for a different request.")
 	ErrStaleVersion = apperr.Conflict("STALE_VERSION",
@@ -169,7 +171,7 @@ func (s *Service) Get(ctx context.Context, p auth.Principal, id string) (Dispute
 	if err != nil {
 		return DisputeDetail{}, err
 	}
-	return s.withCustomer(ctx, p, d)
+	return s.forViewer(ctx, p, d)
 }
 
 type ChangeStatusInput struct {
@@ -215,11 +217,16 @@ func (s *Service) ChangeStatus(ctx context.Context, p auth.Principal, id string,
 		return DisputeDetail{}, err
 	}
 	s.obs.ObserveDisputeStatus(string(in.Status))
-	return s.withCustomer(ctx, p, d)
+	return s.forViewer(ctx, p, d)
 }
 
-func (s *Service) withCustomer(ctx context.Context, p auth.Principal, d DisputeDetail) (DisputeDetail, error) {
+// forViewer shapes a dispute for the caller: staff get the customer and the
+// staff member behind each event; customers get neither.
+func (s *Service) forViewer(ctx context.Context, p auth.Principal, d DisputeDetail) (DisputeDetail, error) {
 	if !p.Role.Staff() {
+		for i := range d.Timeline {
+			d.Timeline[i].Actor = nil
+		}
 		return d, nil
 	}
 	items := []Dispute{d.Dispute}

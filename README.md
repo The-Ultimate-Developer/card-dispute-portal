@@ -8,8 +8,24 @@ A secure portal for customers to view their card transactions, dispute them, and
 | Database | PostgreSQL 16 |
 | Frontend | React 19 + TypeScript (strict), Vite, TanStack Query, React Router, React Hook Form + zod |
 | CI/CD | GitHub Actions → GitHub Container Registry → Render (API) and Netlify (web) |
+| Live | App: https://capitec-card-disputes.netlify.app · API docs: https://dispute-api-nonl.onrender.com/docs. Hosted on free plans for this assessment, so the first load after a quiet spell can take up to a minute while the API wakes up. |
 | API docs | Swagger UI at `/docs`; contract in [`backend/api/openapi.yaml`](backend/api/openapi.yaml) |
 | Operations | [`docs/runbook.md`](docs/runbook.md): environment, deploy, verify, roll back |
+
+## Why one repository
+
+The brief asked for a single GitHub link, so the API and the web app live together in one repository (a **monorepo**). They are still two separate applications: each has its own Dockerfile, its own CI job and its own deployment (the API on Render, the web app on Netlify), and they only talk to each other over HTTP through the OpenAPI contract.
+
+Keeping them together here has real benefits. A change to the API contract and the frontend code that uses it land in one pull request, CI fails if the generated frontend types drift from `backend/api/openapi.yaml`, and `docker compose up` runs the whole system.
+
+In a production bank I would split them into separate repositories once different teams own each side:
+
+- **Ownership and access:** each team controls its own repository, reviews and branch rules.
+- **Independent releases:** today every merge to `main` runs both pipelines and redeploys both; separate repositories release on their own cadence.
+- **Contract as a versioned artifact:** the API would publish `openapi.yaml` as a versioned package, and the frontend would upgrade to new versions deliberately.
+- **Smaller blast radius:** a broken frontend build can't block an urgent API fix.
+
+The step in between, if the repository stayed shared, is path-filtered CI: only build and deploy the side that changed. See [ADR 1](docs/adr/0001-monorepo.md).
 
 ## Run it
 
@@ -34,6 +50,8 @@ Demo data is seeded on first start. Every account uses the password **`Demo@2026
 | `admin@demo.capitec.local` | Admin | Overview, audit log, notification delivery, plus everything above |
 
 Thandi starts with three disputes (submitted, under review, resolved), so every view has data immediately.
+
+**Using the live site:** sign in with any account above. The API runs on Render's free plan, which sleeps when idle, so the first sign-in after a quiet spell can take up to a minute. If it looks stuck, wait a moment and try again; after that it responds normally.
 
 ## Develop and test
 
@@ -96,6 +114,8 @@ Every error is `application/problem+json` with a stable `code`, such as `ACTIVE_
 
 **Correctness**
 - Dispute lifecycle: `SUBMITTED → UNDER_REVIEW or REJECTED`, `UNDER_REVIEW → RESOLVED or REJECTED`; final states have no exits.
+- A declined dispute can be raised again with new evidence; a transaction already refunded through a dispute can't be (`DISPUTE_ALREADY_RESOLVED`).
+- Staff see which colleague handled each step and who last acted on a case; customers only ever see "Disputes team".
 - Idempotent dispute creation; one open dispute per transaction enforced by a partial unique index; optimistic locking on status changes.
 - Dispute timeline and auth audit log are append-only, enforced by database triggers.
 
@@ -132,6 +152,22 @@ Every error is `application/problem+json` with a stable `code`, such as `ACTIVE_
 | Double-click or network retry | The same dispute | Idempotency key plus unique index |
 | Two agents update one dispute | The second gets "changed by someone else" | Optimistic locking |
 | Password guessing | Lockout after 3 tries, then 429s | Atomic attempt counter plus rate limit |
+
+## Assessment-only choices
+
+A few things are deliberately set up so reviewers can explore the system in minutes. Each is one setting away from how a bank would run it:
+
+| In this assessment | Why | In production |
+|---|---|---|
+| Demo accounts and their password are listed on the sign-in page | Reviewers can switch between customer, agent, support and admin without setup | Built with `VITE_DEMO_MODE=false`, which removes the panel; no demo accounts exist |
+| Demo users and data are seeded on start (`SEED_DEMO_DATA=true`) | Every screen has data immediately | Off; users come from the bank's identity provider |
+| Core banking is a mock with fault injection | There is no real core banking system to call | A real adapter behind the same `corebanking.Provider` interface |
+| Emails are simulated (logged with masked addresses) | No email provider account needed | A real `notify.Sender`, such as SES or SendGrid |
+| Swagger UI is public at `/docs` | Reviewers can try the API directly | Internal only, or off (`ENABLE_API_DOCS=false`) |
+| Customers and staff share one web app | One URL to review | A separate back-office app on the internal network behind SSO and MFA |
+| Free hosting plans that sleep when idle | No cost | Always-on instances in at least two zones, with a highly available database |
+
+Security controls are not relaxed for the demo: sessions, CSRF protection, lockout, rate limits, role checks, audit logging and the CSP all behave exactly as they would in production.
 
 ## Production roadmap
 

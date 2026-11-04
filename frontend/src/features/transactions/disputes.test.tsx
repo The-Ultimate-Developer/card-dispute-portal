@@ -17,7 +17,8 @@ describe('transactions', () => {
             transaction(),
             transaction({ id: 't2', merchant: 'Uber', disputable: false, dispute: { id: 'd2', status: 'UNDER_REVIEW' } }),
             transaction({ id: 't3', merchant: 'Checkers', disputable: false, status: 'PENDING' }),
-            transaction({ id: 't4', merchant: 'Engen', disputable: true, dispute: { id: 'd4', status: 'RESOLVED' } }),
+            transaction({ id: 't4', merchant: 'Engen', disputable: true, dispute: { id: 'd4', status: 'REJECTED' } }),
+            transaction({ id: 't5', merchant: 'Bolt', disputable: false, dispute: { id: 'd5', status: 'RESOLVED' } }),
           ],
         }),
       ),
@@ -29,8 +30,10 @@ describe('transactions', () => {
     expect(rows[0]!.querySelector('.statement__amount')?.textContent).toBe('R1\u2009299.99')
     expect(within(rows[1]!).getByRole('link', { name: /View dispute for Uber/ })).toHaveAttribute('href', '/disputes/d2')
     expect(within(rows[2]!).getByText('Pending')).toBeInTheDocument()
-    expect(within(rows[3]!).getByRole('link', { name: /View dispute for Engen/ })).toHaveTextContent('Resolved')
+    expect(within(rows[3]!).getByRole('link', { name: /View dispute for Engen/ })).toHaveTextContent('Declined')
     expect(within(rows[3]!).getByRole('button', { name: /Dispute payment to Engen/ })).toBeInTheDocument()
+    expect(within(rows[4]!).getByRole('link', { name: /View dispute for Bolt/ })).toHaveTextContent('Resolved')
+    expect(within(rows[4]!).queryByRole('button')).not.toBeInTheDocument()
   })
 
   it('submits a dispute once, with CSRF and idempotency headers, and opens it', async () => {
@@ -106,6 +109,8 @@ describe('dispute detail for customers', () => {
       'Outcome (not yet reached)',
     ])
     expect(steps[0]).toHaveAttribute('aria-current', 'step')
+    expect(steps[0]).toHaveTextContent('by You')
+    expect(screen.queryByText('Handled by')).not.toBeInTheDocument()
     expect(screen.queryByRole('group', { name: 'Change status' })).not.toBeInTheDocument()
   })
 
