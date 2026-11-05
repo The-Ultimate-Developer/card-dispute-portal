@@ -6,7 +6,7 @@ import { useAuth } from '../../auth/AuthProvider'
 import { CaseTrack } from '../../components/CaseTrack'
 import { ErrorNotice, Loading, Notice } from '../../components/Feedback'
 import { StatusBadge } from '../../components/StatusBadge'
-import { disputeReference, reasonLabels, statusExplanation } from '../../lib/disputes'
+import { disputeReference, handledBy, reasonLabels, statusExplanation } from '../../lib/disputes'
 import { formatDate, formatDateTime, formatMoney } from '../../lib/format'
 import { NotFoundPage } from '../system/SystemPages'
 import { StatusActions } from '../staff/StatusActions'
@@ -28,6 +28,7 @@ export function DisputeDetailPage() {
   }
 
   const dispute = query.data
+  const handler = isStaff ? handledBy(dispute.timeline) : undefined
 
   return (
     <>
@@ -67,6 +68,22 @@ export function DisputeDetailPage() {
                   {dispute.customer.fullName}
                   <br />
                   <span className="muted">{dispute.customer.email}</span>
+                </dd>
+              </div>
+            )}
+            {isStaff && (
+              <div>
+                <dt>Handled by</dt>
+                <dd>
+                  {handler ? (
+                    <>
+                      {handler.fullName}
+                      <br />
+                      <span className="muted">{handler.email}</span>
+                    </>
+                  ) : (
+                    <span className="muted">Not picked up yet</span>
+                  )}
                 </dd>
               </div>
             )}

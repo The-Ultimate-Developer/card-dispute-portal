@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { dispute } from '../test/fixtures'
-import { caseTrack, disputeReference, isFinal, nextStatuses, statusLabel } from './disputes'
+import { caseTrack, disputeReference, handledBy, isFinal, nextStatuses, statusLabel } from './disputes'
 
 describe('dispute state machine', () => {
   it('offers only the transitions the API allows', () => {
@@ -46,5 +46,30 @@ describe('caseTrack', () => {
     ])
     expect(steps.every((s) => s.state === 'done')).toBe(true)
     expect(steps.at(-1)?.actor).toBe('Disputes team')
+  })
+})
+
+describe('who handled a dispute', () => {
+  const reviewed = [
+    ...dispute().timeline,
+    {
+      id: 2,
+      fromStatus: 'SUBMITTED' as const,
+      toStatus: 'UNDER_REVIEW' as const,
+      actorRole: 'AGENT' as const,
+      actor: { fullName: 'Lerato Dlamini', email: 'agent@demo.capitec.local' },
+      note: '',
+      createdAt: '2026-10-22T08:00:00Z',
+    },
+  ]
+
+  it('names staff to staff, and only "Disputes team" to customers', () => {
+    expect(caseTrack('UNDER_REVIEW', reviewed, 'staff').map((s) => s.actor)).toEqual(['Customer', 'Lerato Dlamini', undefined])
+    expect(caseTrack('UNDER_REVIEW', reviewed, 'customer').map((s) => s.actor)).toEqual(['You', 'Disputes team', undefined])
+  })
+
+  it('is the last staff member who acted', () => {
+    expect(handledBy(reviewed)?.fullName).toBe('Lerato Dlamini')
+    expect(handledBy(dispute().timeline)).toBeUndefined()
   })
 })

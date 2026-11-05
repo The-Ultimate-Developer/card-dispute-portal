@@ -222,8 +222,8 @@ func TestLifecycleWithOptimisticLocking(t *testing.T) {
 		t.Fatalf("leaving a final state: got %s", code(err))
 	}
 
-	if _, _, err := f.svc.Create(ctx, f.customer, input(f.posted, "key-00000031")); err != nil {
-		t.Fatalf("a resolved dispute should allow a new one: %v", err)
+	if _, _, err := f.svc.Create(ctx, f.customer, input(f.posted, "key-00000031")); code(err) != "DISPUTE_ALREADY_RESOLVED" {
+		t.Fatalf("a transaction already refunded through a dispute can't be disputed again: got %s", code(err))
 	}
 }
 

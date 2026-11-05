@@ -1,15 +1,15 @@
 import type { DisputeStatus, TimelineEvent } from '../api/types'
-import { caseTrack } from '../lib/disputes'
+import { caseTrack, type Viewer } from '../lib/disputes'
 import { formatDateTime } from '../lib/format'
 
 interface CaseTrackProps {
   status: DisputeStatus
   timeline: TimelineEvent[]
-  viewer: 'customer' | 'staff'
+  viewer: Viewer
 }
 
 export function CaseTrack({ status, timeline, viewer }: CaseTrackProps) {
-  const steps = caseTrack(status, timeline)
+  const steps = caseTrack(status, timeline, viewer)
   return (
     <ol className="track" aria-label="Dispute progress">
       {steps.map((step) => (
@@ -27,7 +27,7 @@ export function CaseTrack({ status, timeline, viewer }: CaseTrackProps) {
             {step.at && (
               <p className="track__meta">
                 <time dateTime={step.at}>{formatDateTime(step.at)}</time>
-                {step.actor && <> by {viewer === 'staff' && step.actor === 'You' ? 'Customer' : step.actor}</>}
+                {step.actor && <> by {step.actor}</>}
               </p>
             )}
             {step.note && <p className="track__note">{step.note}</p>}

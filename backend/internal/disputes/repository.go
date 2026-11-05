@@ -75,6 +75,16 @@ func (r *Repository) create(ctx context.Context, p createParams) (Dispute, bool,
 			return err
 		}
 
+		var resolved bool
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS (SELECT 1 FROM disputes WHERE transaction_id = $1 AND status = $2)`,
+			p.Transaction.ID, StatusResolved).Scan(&resolved); err != nil {
+			return fmt.Errorf("check resolved disputes: %w", err)
+		}
+		if resolved {
+			return ErrAlreadyResolved
+		}
+
 		t := p.Transaction
 		row := tx.QueryRow(ctx, `
 			INSERT INTO disputes (customer_id, transaction_id, merchant, amount_cents, currency,
@@ -258,14 +268,17 @@ func getDetail(ctx context.Context, q querier, id string, customerID *string) (D
 		return DisputeDetail{}, err
 	}
 	rows, err := q.Query(ctx, `
-		SELECT id, from_status, to_status, actor_role, note, created_at
-		FROM dispute_events WHERE dispute_id = $1 ORDER BY id`, id)
+		SELECT e.id, e.from_status, e.to_status, e.actor_role, u.full_name, u.email, e.note, e.created_at
+		FROM dispute_events e JOIN users u ON u.id = e.actor_id
+		WHERE e.dispute_id = $1 ORDER BY e.id`, id)
 	if err != nil {
 		return DisputeDetail{}, fmt.Errorf("list events: %w", err)
 	}
 	events, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Event, error) {
 		var e Event
-		err := row.Scan(&e.ID, &e.FromStatus, &e.ToStatus, &e.ActorRole, &e.Note, &e.CreatedAt)
+		var a Actor
+		err := row.Scan(&e.ID, &e.FromStatus, &e.ToStatus, &e.ActorRole, &a.FullName, &a.Email, &e.Note, &e.CreatedAt)
+		e.Actor = &a
 		return e, err
 	})
 	if err != nil {

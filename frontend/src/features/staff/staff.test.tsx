@@ -8,6 +8,41 @@ import { renderApp } from '../../test/render'
 import { server } from '../../test/server'
 
 const customer = { id: 'c1', fullName: 'Thandi Mokoena', email: 'thandi@demo.capitec.local' }
+const agent = { fullName: 'Lerato Dlamini', email: 'agent@demo.capitec.local' }
+
+describe('who is handling a dispute', () => {
+  it('shows staff the agent who last acted, and names them on the timeline', async () => {
+    server.use(
+      signedInAs('ADMIN'),
+      http.get('/api/disputes/:id', () =>
+        HttpResponse.json(
+          dispute({
+            customer,
+            status: 'UNDER_REVIEW',
+            version: 2,
+            timeline: [
+              { ...dispute().timeline[0]!, actor: { fullName: customer.fullName, email: customer.email } },
+              { id: 2, fromStatus: 'SUBMITTED', toStatus: 'UNDER_REVIEW', actorRole: 'AGENT', actor: agent, note: '', createdAt: '2026-10-22T08:00:00Z' },
+            ],
+          }),
+        ),
+      ),
+    )
+    renderApp(`/staff/disputes/${dispute().id}`)
+
+    const handledBy = await screen.findByText('Handled by')
+    expect(handledBy.nextElementSibling).toHaveTextContent('Lerato Dlamini')
+    expect(screen.getByText(/by Customer/)).toBeInTheDocument()
+    expect(screen.getByText(/by Lerato Dlamini/)).toBeInTheDocument()
+  })
+
+  it('says when nobody has picked the dispute up yet', async () => {
+    server.use(signedInAs('AGENT'), http.get('/api/disputes/:id', () => HttpResponse.json(dispute({ customer }))))
+    renderApp(`/staff/disputes/${dispute().id}`)
+
+    expect(await screen.findByText('Not picked up yet')).toBeInTheDocument()
+  })
+})
 
 describe('agent status actions', () => {
   it('sends the version it read and shows the new status', async () => {

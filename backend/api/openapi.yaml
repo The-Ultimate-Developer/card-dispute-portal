@@ -445,7 +445,7 @@ components:
         occurredAt: { type: string, format: date-time }
         disputable:
           type: boolean
-          description: Posted, within 120 days, and without an open dispute.
+          description: Posted, within 120 days, with no open dispute and no dispute already resolved in the customer's favour. A declined dispute can be raised again.
         dispute:
           nullable: true
           allOf: [{ $ref: '#/components/schemas/DisputeSummary' }]
@@ -523,8 +523,18 @@ components:
           allOf: [{ $ref: '#/components/schemas/DisputeStatus' }]
         toStatus: { $ref: '#/components/schemas/DisputeStatus' }
         actorRole: { $ref: '#/components/schemas/Role' }
+        actor:
+          description: The person behind the event. Present only for staff (agents and admins).
+          allOf: [{ $ref: '#/components/schemas/Actor' }]
         note: { type: string }
         createdAt: { type: string, format: date-time }
+
+    Actor:
+      type: object
+      required: [fullName, email]
+      properties:
+        fullName: { type: string }
+        email: { type: string, format: email }
 
     DisputeDetail:
       allOf:

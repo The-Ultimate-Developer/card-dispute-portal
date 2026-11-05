@@ -1,4 +1,4 @@
-import type { DisputeReason, DisputeStatus, TimelineEvent } from '../api/types'
+import type { Actor, DisputeReason, DisputeStatus, TimelineEvent } from '../api/types'
 
 export function assertNever(value: never): never {
   throw new Error(`Unhandled value: ${String(value)}`)
@@ -91,9 +91,23 @@ export interface TrackStep {
   actor?: string
 }
 
+export type Viewer = 'customer' | 'staff'
+
+// Customers see "Disputes team", never an employee's name; the API doesn't send
+// it to them. Staff see who did what.
+function actorLabel(event: TimelineEvent, viewer: Viewer): string {
+  if (event.actorRole === 'CUSTOMER') return viewer === 'customer' ? 'You' : 'Customer'
+  return viewer === 'staff' && event.actor ? event.actor.fullName : 'Disputes team'
+}
+
+// The staff member who last acted on the case: the one to ask about it.
+export function handledBy(timeline: TimelineEvent[]): Actor | undefined {
+  return timeline.findLast((event) => event.actorRole !== 'CUSTOMER' && event.actor)?.actor
+}
+
 // The case track: every recorded event, then the steps still to come, so a
 // customer always sees what happens next.
-export function caseTrack(status: DisputeStatus, timeline: TimelineEvent[]): TrackStep[] {
+export function caseTrack(status: DisputeStatus, timeline: TimelineEvent[], viewer: Viewer = 'customer'): TrackStep[] {
   const steps: TrackStep[] = timeline.map((event, index) => ({
     key: `event-${event.id}`,
     title: statusLabel(event.toStatus),
@@ -101,7 +115,7 @@ export function caseTrack(status: DisputeStatus, timeline: TimelineEvent[]): Tra
     status: event.toStatus,
     at: event.createdAt,
     note: event.note,
-    actor: event.actorRole === 'CUSTOMER' ? 'You' : 'Disputes team',
+    actor: actorLabel(event, viewer),
   }))
 
   if (status === 'SUBMITTED') {
